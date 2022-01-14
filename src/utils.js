@@ -94,9 +94,9 @@ const parseStartUrlsFromFile = async (fileUrl) => {
     let startUrls = [];
 
     if (isGoogleSpreadsheetFile(fileUrl)) {
-        const dowloadUrl = convertGoogleSheetsUrlToCsvDownload(fileUrl);
-        if (dowloadUrl) {
-            startUrls = await fetchRowsFromCsvFile(dowloadUrl)
+        const downloadUrl = convertGoogleSheetsUrlToCsvDownload(fileUrl);
+        if (downloadUrl) {
+            startUrls = await fetchRowsFromCsvFile(downloadUrl)
         } else {
             log.warning(`WRONG INPUT: Google Sheets URL cannot be converted to CSV. `)
         }
