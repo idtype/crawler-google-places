@@ -1,6 +1,5 @@
 /* eslint-env jquery */
 const Apify = require('apify');
-const querystring = require('querystring');
 
 const Puppeteer = require('puppeteer'); // eslint-disable-line
 const typedefs = require('./typedefs'); // eslint-disable-line no-unused-vars
@@ -24,6 +23,7 @@ const CHECK_LOAD_OUTCOMES_EVERY_MS = 500;
  *   page: Puppeteer.Page,
  *   requestQueue: Apify.RequestQueue,
  *   request: Apify.Request,
+ *   session: Apify.Session,
  *   searchString: string,
  *   exportPlaceUrls: boolean,
  *   geolocation: typedefs.Geolocation | undefined,
@@ -36,99 +36,121 @@ const CHECK_LOAD_OUTCOMES_EVERY_MS = 500;
  * @return {(response: Puppeteer.Response) => Promise<any>}
  */
 const enqueuePlacesFromResponse = (options) => {
-    const { page, requestQueue, searchString, request, exportPlaceUrls, geolocation,
+    const { page, requestQueue, searchString, request, session, exportPlaceUrls, geolocation,
         placesCache, stats, maxCrawledPlacesTracker, exportUrlsDeduper, crawler } = options;
+
     return async (response) => {
+        const result = {
+            isDataPage: false,
+            enqueued: 0,
+        };
+
         const url = response.url();
         const isSearchPage = url.match(/google\.[a-z.]+\/search/);
         if (!isSearchPage) {
-            return { isDataPage: false };
+            return result;
         }
+
+        const parsedUrl = new URL(url);
         
         // Parse page number from request url
-        const queryParams = querystring.parse(url.split('?')[1]);
-        // @ts-ignore
-        const pageNumber = parseInt(queryParams.ech, 10);
+        const queryParams = parsedUrl.searchParams;
+        const FIRST_PAGE = 1;
+        const PAGE_NUMBER_PARAM_NAME = 'ech';
+        const pageNumberParameter = queryParams.get(PAGE_NUMBER_PARAM_NAME);
+
+        const pageNumber = pageNumberParameter ? parseInt(pageNumberParameter, 10) : FIRST_PAGE;
+        
         // Parse place ids from response body
-        const responseBody = await response.buffer();
-        const placesPaginationData = parseSearchPlacesResponseBody(responseBody);
-        let index = -1;
-        let enqueued = 0;
-        // At this point, page URL should be resolved
-        const searchPageUrl = page.url();
+        try {
+            /**
+             * Sometimes fails unexpectedly with: 'Session closed. Most likely the page has been closed'.
+             * Resolve by using try-catch block and retiring current session.
+             */
+            const responseBody = await response.buffer(); 
 
-        for (const placePaginationData of placesPaginationData) {
-            index++;
-            const rank = ((pageNumber - 1) * 20) + (index + 1);
-            // TODO: Refactor this once we get rid of the caching
-            const coordinates = placePaginationData.coords || placesCache.getLocation(placePaginationData.placeId);
-            const placeUrl = `https://www.google.com/maps/search/?api=1&query=${searchString}&query_place_id=${placePaginationData.placeId}`;
-            placesCache.addLocation(placePaginationData.placeId, coordinates, searchString);
+            const placesPaginationData = parseSearchPlacesResponseBody(responseBody);
+            let index = -1;
+            // At this point, page URL should be resolved
+            const searchPageUrl = page.url();
 
-            // true if no geo or coordinates
-            const isCorrectGeolocation = checkInPolygon(geolocation, coordinates);
-            if (!isCorrectGeolocation) {
-                stats.outOfPolygonCached();
-                stats.outOfPolygon();
-                stats.addOutOfPolygonPlace({ url: placeUrl, searchPageUrl, coordinates });
-                continue;
-            }
-            if (exportPlaceUrls) {
-                if (!maxCrawledPlacesTracker.canScrapeMore()) {
-                    return;
+            for (const placePaginationData of placesPaginationData) {
+                index++;
+                const rank = ((pageNumber - 1) * 20) + (index + 1);
+                // TODO: Refactor this once we get rid of the caching
+                const coordinates = placePaginationData.coords || placesCache.getLocation(placePaginationData.placeId);
+                const placeUrl = `https://www.google.com/maps/search/?api=1&query=${searchString}&query_place_id=${placePaginationData.placeId}`;
+                placesCache.addLocation(placePaginationData.placeId, coordinates, searchString);
+
+                // true if no geo or coordinates
+                const isCorrectGeolocation = checkInPolygon(geolocation, coordinates);
+                if (!isCorrectGeolocation) {
+                    stats.outOfPolygonCached();
+                    stats.outOfPolygon();
+                    stats.addOutOfPolygonPlace({ url: placeUrl, searchPageUrl, coordinates });
+                    continue;
                 }
-                const shouldScrapeMore = maxCrawledPlacesTracker.setScraped();
-                const wasAlreadyPushed = exportUrlsDeduper?.testDuplicateAndAdd(placePaginationData.placeId);
-                if (!wasAlreadyPushed) {
-                    await Apify.pushData({
-                        url: `https://www.google.com/maps/search/?api=1&query=${searchString}&query_place_id=${placePaginationData.placeId}`,
-                    });
-                }
-                if (!shouldScrapeMore) {
-                    log.warning(`[SEARCH]: Finishing scraping because we reached maxCrawledPlaces `
-                        // + `currently: ${maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]}(for this search)/${maxCrawledPlacesTracker.enqueuedTotal}(total) `
-                        + `--- ${searchString} - ${request.url}`);
-                    await crawler.autoscaledPool?.abort();
-                    return;
-                }
-            } else {                   
-                const searchKey = searchString || request.url;
-                if (!maxCrawledPlacesTracker.setEnqueued(searchKey)) {
-                    log.warning(`[SEARCH]: Finishing search because we enqueued more than maxCrawledPlaces `
-                        + `currently: ${maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]}(for this search)/${maxCrawledPlacesTracker.enqueuedTotal}(total) `
-                        + `--- ${searchString} - ${request.url}`);
-                    break;
-                }
-                const { wasAlreadyPresent } = await requestQueue.addRequest({
-                        url: placeUrl,
-                        uniqueKey: placePaginationData.placeId,
-                        userData: {
-                            label: 'detail',
-                            searchString,
-                            rank,
-                            searchPageUrl,
-                            coords: placePaginationData.coords,
-                            addressParsed: placePaginationData.addressParsed,
-                            isAdvertisement: placePaginationData.isAdvertisement,
-                            categories: placePaginationData.categories
+                if (exportPlaceUrls) {
+                    if (!maxCrawledPlacesTracker.canScrapeMore()) {
+                        return result;
+                    }
+                    const wasAlreadyPushed = exportUrlsDeduper?.testDuplicateAndAdd(placePaginationData.placeId);
+                    if (!wasAlreadyPushed) {
+                        await Apify.pushData({
+                            url: `https://www.google.com/maps/search/?api=1&query=${searchString}&query_place_id=${placePaginationData.placeId}`,
+                        });
+                        const shouldScrapeMore = maxCrawledPlacesTracker.setScraped(searchString);
+                        if (!shouldScrapeMore) {
+                            log.warning(`[SEARCH]: Finishing scraping because we reached maxCrawledPlaces `
+                                // + `currently: ${maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]}(for this search)/${maxCrawledPlacesTracker.enqueuedTotal}(total) `
+                                + `--- ${searchString} - ${request.url}`);
+                            await crawler.autoscaledPool?.abort();
+                            return result;
+                        }
+                    }
+                } else {                   
+                    const searchKey = searchString || request.url;
+                    if (!maxCrawledPlacesTracker.setEnqueued(searchKey)) {
+                        log.warning(`[SEARCH]: Finishing search because we enqueued more than maxCrawledPlaces `
+                            + `currently: ${maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]}(for this search)/${maxCrawledPlacesTracker.enqueuedTotal}(total) `
+                            + `--- ${searchString} - ${request.url}`);
+                        break;
+                    }
+                    const { wasAlreadyPresent } = await requestQueue.addRequest({
+                            url: placeUrl,
+                            uniqueKey: placePaginationData.placeId,
+                            userData: {
+                                label: 'detail',
+                                searchString,
+                                rank,
+                                searchPageUrl,
+                                coords: placePaginationData.coords,
+                                addressParsed: placePaginationData.addressParsed,
+                                isAdvertisement: placePaginationData.isAdvertisement,
+                                categories: placePaginationData.categories
+                            },
                         },
-                    },
-                    { forefront: true });
-                if (!wasAlreadyPresent) {
-                    enqueued++;
-                } else {
-                    log.warning(`Google presented already enqueued place, skipping... --- ${placeUrl}`)
-                    maxCrawledPlacesTracker.enqueuedTotal--;
-                    maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]--;
+                        { forefront: true });
+                    if (!wasAlreadyPresent) {
+                        result.enqueued++;
+                    } else {
+                        log.warning(`Google presented already enqueued place, skipping... --- ${placeUrl}`)
+                        maxCrawledPlacesTracker.enqueuedTotal--;
+                        maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]--;
+                    }
                 }
             }
+            const numberOfAds = placesPaginationData.filter((item) => item.isAdvertisement).length;
+            log.info(`[SEARCH]: Enqueued ${result.enqueued}/${placesPaginationData.length} places (correct location/total) + ${numberOfAds} ads --- ${page.url()}`)
+            result.isDataPage = true;
+        } catch (er) {
+            session.markBad();
+            log.warning('[SEARCH]: Session marked bad. Most likely the page has been closed.');
         }
-        const numberOfAds = placesPaginationData.filter((item) => item.isAdvertisement).length;
-        log.info(`[SEARCH]: Enqueued ${enqueued}/${placesPaginationData.length} places (correct location/total) + ${numberOfAds} ads --- ${page.url()}`)
-        return { isDataPage: true, enqueued } 
+        
+        return result; 
     };
 };
-
 
 /**
  * Periodically checks if one of the possible search outcomes have happened
@@ -180,6 +202,7 @@ const waitForSearchResults = async (page) => {
  *  searchString: string,
  *  requestQueue: Apify.RequestQueue,
  *  request: Apify.Request,
+ *  session: Apify.Session,
  *  helperClasses: typedefs.HelperClasses,
  *  scrapingOptions: typedefs.ScrapingOptions,
  *  crawler: Apify.PuppeteerCrawler,
@@ -190,6 +213,7 @@ module.exports.enqueueAllPlaceDetails = async ({
                                           searchString,
                                           requestQueue,
                                           request,
+                                          session,
                                           crawler,
                                           scrapingOptions,
                                           helperClasses,
@@ -204,6 +228,7 @@ module.exports.enqueueAllPlaceDetails = async ({
         requestQueue,
         searchString,
         request,
+        session,
         exportPlaceUrls,
         geolocation,
         placesCache,

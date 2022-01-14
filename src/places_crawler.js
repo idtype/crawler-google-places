@@ -59,6 +59,7 @@ const handlePageFunctionExtended = async ({ pageContext, scrapingOptions, helper
                     searchString,
                     requestQueue: crawler.requestQueue,
                     request,
+                    session,
                     helperClasses,
                     scrapingOptions,
                     crawler,

@@ -162,7 +162,7 @@ module.exports.handlePlaceDetail = async (options) => {
         isAdvertisement,
         rank,
         placeId: jsonData?.[78] || request.uniqueKey,
-        categories: request.userData.categories || categories,
+        categories: request.userData.categories || categories,
         cid,
         url,
         searchPageUrl,
@@ -210,7 +210,7 @@ module.exports.handlePlaceDetail = async (options) => {
     await Apify.pushData(detail);
     stats.places();
     log.info(`[PLACE]: Place scraped successfully --- ${url}`);
-    const shouldScrapeMore = maxCrawledPlacesTracker.setScraped();
+    const shouldScrapeMore = maxCrawledPlacesTracker.setScraped(searchString);
     if (!shouldScrapeMore) {
         log.warning(`[SEARCH]: Finishing scraping because we reached maxCrawledPlaces `
             // + `currently: ${maxCrawledPlacesTracker.enqueuedPerSearch[searchKey]}(for this search)/${maxCrawledPlacesTracker.enqueuedTotal}(total) `
