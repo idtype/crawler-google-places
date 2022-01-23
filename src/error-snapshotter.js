@@ -41,7 +41,7 @@ module.exports = class ErrorSnapshotter {
      * Optionally, you can name the action for nicer logging, otherwise name of the error is used
      * These functions can be nested, in that case only one snapshot is produced (for the bottom error)
      * @param {Puppeteer.Page | string} pageOrHtml Puppeteer page or HTML
-     * @param {() => Puppeteer.} fn Function to execute
+     * @param {() => Promise<any>} fn Function to execute
      * @param {{
      *      name?: string,
      *      returnError?: boolean,
@@ -57,6 +57,7 @@ module.exports = class ErrorSnapshotter {
         try {
             return await fn();
         } catch (e) {
+            /** @type {any} */
             let err = e;
             // We don't want the Error: text, also we have to count with Error instances and string errors
             const errMessage = err.message || err;

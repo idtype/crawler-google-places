@@ -9,7 +9,7 @@ module.exports = class ExportUrlsDeduper {
         this.dedupSet = new Set();
     }
 
-    async initialize(events) {
+    async initialize(/** @type {any} */ events) {
         this.allPlaces = await this.loadFromStore();
 
         events.on('persistState', async () => {
