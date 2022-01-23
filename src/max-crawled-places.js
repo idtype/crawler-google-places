@@ -41,7 +41,7 @@ module.exports = class MaxCrawledPlacesTracker {
 
     /**
      * Returns true if we can still enqueue more for this search string
-     * @param {string} [searchString]
+     * @param {string} searchString
      * @returns {boolean}
      */
     canEnqueueMore(searchString) {
@@ -59,7 +59,7 @@ module.exports = class MaxCrawledPlacesTracker {
      * Increments a counter for enqueued requests
      * Returns true if the requests count was incremented
      * and the request should be really enqueued, false if not
-     * @param {string} [searchString]
+     * @param {string} searchString
      * @returns {boolean}
      */
     setEnqueued(searchString) {
@@ -81,7 +81,7 @@ module.exports = class MaxCrawledPlacesTracker {
 
     /**
      * Returns true if we can still scrape more for this search string
-     * @param {string} [searchString]
+     * @param {string} searchString
      * @returns {boolean}
      */
      canScrapeMore(searchString) {
@@ -99,7 +99,7 @@ module.exports = class MaxCrawledPlacesTracker {
      * Increments a counter for scraped requests
      * Returns true if the requests count was incremented
      * and we should continue to scrape for this search, false if not
-     * @param {string} [searchString]
+     * @param {string} searchString
      * @returns {boolean}
      */
      setScraped(searchString) {

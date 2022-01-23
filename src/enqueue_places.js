@@ -91,7 +91,7 @@ const enqueuePlacesFromResponse = (options) => {
                     continue;
                 }
                 if (exportPlaceUrls) {
-                    if (!maxCrawledPlacesTracker.canScrapeMore()) {
+                    if (!maxCrawledPlacesTracker.canScrapeMore(searchString)) {
                         return result;
                     }
                     const wasAlreadyPushed = exportUrlsDeduper?.testDuplicateAndAdd(placePaginationData.placeId);
